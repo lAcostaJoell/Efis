@@ -1,1 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EFIS Avanzado Simulado</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background-color: black;
+            color: white;
+        }
 
+        #efisCanvas {
+            display: block;
+            margin: 0 auto;
+            background-color: black;
+            border: 2px solid white;
+        }
+
+        .bar {
+            position: absolute;
+            width: 80px;
+            height: 400px;
+            border: 2px solid white;
+            background-color: black;
+            color: white;
+            font-size: 18px;
+            padding: 10px;
+        }
+
+        .speedBar {
+            left: 10px;
+            top: 50px;
+        }
+
+        .altitudeBar {
+            right: 10px;
+            top: 50px;
+        }
+
+        .headingBar {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            right: 50px;
+            height: 50px;
+            border: 2px solid white;
+            background-color: black;
+            color: white;
+            text-align: center;
+            line-height: 50px;
+            font-size: 24px;
+        }
+
+        .value {
+            font-size: 24px;
+        }
+
+        /* Simulación de alerta de pérdida (stall) */
+        .stallWarning {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 30px;
+            color: red;
+            display: none;
+        }
+
+        .active {
+            display: block;
+        }
+        .hipersustentabilidadWarning {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 30px;
+            color: orange;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- Barra de Velocidad -->
+    <div class="bar speedBar">
+        <p>Velocidad</p>
+        <div id="speedValue" class="value">--- kt</div>
+    </div>
+
+    <!-- Canvas para el horizonte artificial -->
+    <canvas id="efisCanvas" width="600" height="600"></canvas>
+
+    <!-- Barra de Altitud -->
+    <div class="bar altitudeBar">
+        <p>Altitud</p>
+        <div id="altitudeValue" class="value">--- ft</div>
+    </div>
+
+    <!-- Barra de Rumbo -->
+    <div class="headingBar">
+        Rumbo: <span id="headingValue">---°</span>
+    </div>
+
+    <!-- Alerta de pérdida de sustentación (stall) -->
+    <div class="stallWarning" id="stallWarning">STALL WARNING</div>
+
+    <!--Audio-->
+    <button onclick="PlayAudio()">Reproducir audio</button>
+    <audio id="stallAudio" controls>
+      <source = "cancion.mp3" type="audio/mpeg">
+      <source src="cancion.ogg" type="audio/ogg">
+        <source src="cancion.WAV" type="audio/WAV">
+          El navegador no soporta audio
+    </audio>
+    <script>
+function playAudioOnTouch() {
+    var audio = document.getElementById('stallAudio');
+    audio.play().then(() => {
+        console.log("Audio reproduciéndose en dispositivo móvil.");
+        document.removeEventListener('touchstart', playAudioOnTouch); // Elimina el evento tras el primer toque
+    }).catch(error => {
+        console.error("Error al reproducir el audio en móvil:", error);
+    });
+}
+
+document.addEventListener('touchstart', playAudioOnTouch); // Reproduce al primer toque
+</script>
+    <!-- Indicador de Hipersustentabilidad -->
+    <div class="hipersustentabilidadWarning" id="hipersustentabilidadWarning">
+        HIPERSUSTENTABILIDAD ACTIVA
+    </div>
+
+    <script>
+
+        var ws = new WebSocket('ws://192.168.217.73:81/');
+
+        ws.onopen = function() {
+          console.log("WebSocket conectado");
+        };
+
+        ws.onclose = function() {
+          console.log("WebSocket desconectado");
+        };
+
+        ws.onerror = function(error) {
+          console.error("Error en WebSocket:", error);
+        };
+        ws.onmessage = function (event){
+          var data = JSON.parse(event.data);
+        //  console.log("Datos recibidos: ", data);
+          updateEFIS(data.speed, data.altitude, data.heading, data.AoA, data.hipersustentabilidad);
+
+        }
+
+        // Canvas para dibujar el horizonte artificial
+        var canvas = document.getElementById('efisCanvas');
+        var ctx = canvas.getContext('2d');
+
+        // Variables iniciales
+        var roll = 0;     // Rotación lateral (roll)
+        var pitch = 0;    // Inclinación hacia arriba o abajo (pitch)
+        //var speed = 0;  // Velocidad simulada
+        //var altitude = 0;  // Altitud simulada
+        //var heading = 0; // Rumbo simulado
+        var speed = 0;
+        var altitude = 0;
+        var heading = 0;
+        var AoA = 0;
+        var hipersustentabilidad = true;
+
+        // Limites para la alerta de stall (cuando la velocidad es muy baja o alta)
+        const stallAoA = 70;
+        let stallPlaying = false; //controlar el Audio
+
+        //referencia de audio
+        var stallAudio = document.getElementById('stallAudio');
+
+        function PlayAudio(){
+          document.getElementById("stallAudio").play();
+        }
+        function drawEFIS() {
+          console.log("Actualizando EFIS con:", speed, altitude, heading, AoA, hipersustentabilidad);
+            // Limpiar el canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Centrar las coordenadas
+            var centerX = canvas.width / 2;
+            var centerY = canvas.height / 2;
+
+            // Dibujar el horizonte artificial
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(-roll * Math.PI / 180);
+
+            // Gradiente de cielo y tierra
+            var gradientSky = ctx.createLinearGradient(0, -canvas.height / 2, 0, 0);
+            gradientSky.addColorStop(0, '#87CEEB'); // Azul cielo
+            gradientSky.addColorStop(1, '#1E90FF'); // Azul oscuro
+            ctx.fillStyle = gradientSky;
+            ctx.fillRect(-300, -300 + pitch, 600, 300 - pitch); // Cielo
+
+            var gradientGround = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
+            gradientGround.addColorStop(0, '#8B4513'); // Tierra marrón
+            gradientGround.addColorStop(1, '#654321'); // Marrón oscuro
+            ctx.fillStyle = gradientGround;
+            ctx.fillRect(-300, 0 + pitch, 600, 300 + pitch); // Tierra
+
+            // Dibujar línea del horizonte
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-300, 0);
+            ctx.lineTo(300, 0);
+            ctx.stroke();
+
+            // Dibujar marcadores de referencia (pitch)
+            ctx.strokeStyle = "white";
+            for (let i = -30; i <= 30; i += 10) {
+                let yOffset = i * 10 + pitch;
+                ctx.beginPath();
+                ctx.moveTo(-30, yOffset);
+                ctx.lineTo(30, yOffset);
+                ctx.stroke();
+                ctx.fillText(i + "°", 40, yOffset + 5);
+            }
+
+            ctx.restore();
+
+            // Indicadores visuales (línea central de referencia)
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX - 40, centerY);
+            ctx.lineTo(centerX + 40, centerY);
+            ctx.stroke();
+
+            // Triángulo central
+            ctx.fillStyle = "yellow";
+            ctx.beginPath();
+            ctx.moveTo(centerX - 10, centerY + 30);
+            ctx.lineTo(centerX + 10, centerY + 30);
+            ctx.lineTo(centerX, centerY + 10);
+            ctx.fill();
+
+            // Actualizar los valores visuales en la interfaz
+            document.getElementById("speedValue").textContent = speed + " kt";
+            document.getElementById("altitudeValue").textContent = altitude + " ft";
+            document.getElementById("headingValue").textContent = heading + "°";
+
+            // Mostrar alerta de stall si la velocidad es menor al límite
+            var stallWarning = document.getElementById("stallWarning");
+            if (AoA > stallAoA) {
+                stallWarning.classList.add('active');
+                // Si no está reproduciendo el audio, lo iniciamos
+                if (!stallPlaying) {
+                    stallAudio.play();
+                    stallPlaying = true;
+                }
+            } else {
+                stallWarning.classList.remove('active');
+                // Si el audio se está reproduciendo y ya no estamos en stall, lo detenemos
+                if (stallPlaying) {
+                    stallAudio.pause();
+                    stallAudio.currentTime = 0; // Reiniciar audio
+                    stallPlaying = false;
+                }
+            }
+        }
+
+        // Simulación dinámica de cambios en el EFIS
+        function updateEFIS(Newspeed,Newaltitude,Newheading,NewAoA,hipersustentabilidad) {
+          roll = Math.sin(Date.now() / 1000) * 30;  // Simulación de rotación
+          pitch = Math.sin(Date.now() / 1500) * 20;  // Simulación de inclinación
+          document.getElementById("speedValue").textContent = speed + " kt";
+          document.getElementById("altitudeValue").textContent = altitude + " ft";
+          document.getElementById("headingValue").textContent = heading + "°";
+          speed = Newspeed;
+          altitude = Newaltitude;
+          heading = Newheading;
+          AoA = NewAoA;
+          drawEFIS();
+
+      // Mostrar indicador de hipersustentabilidad si está activo
+      var hipersustentabilidadWarning = document.getElementById("hipersustentabilidadWarning");
+      if (hipersustentabilidad) {
+          hipersustentabilidadWarning.style.display = "block";
+        }   else {
+          hipersustentabilidadWarning.style.display = "none";
+        }
+
+    requestAnimationFrame(() => updateEFIS(speed, altitude, heading, AoA, hipersustentabilidad));
+
+}
+
+
+        // Iniciar simulación del EFIS
+        updateEFIS(speed, altitude, heading, AoA, hipersustentabilidad);
+    </script>
+</body>
+</html>
